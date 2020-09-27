@@ -15,13 +15,14 @@ from jmclient import YieldGeneratorBasic, ygmain, jm_single
 """THESE SETTINGS CAN SIMPLY BE EDITED BY HAND IN THIS FILE:
 """
 
-ordertype = 'swreloffer'  # [string, 'swreloffer' or 'swabsoffer'] / which fee type to actually use
-cjfee_a = 2300             # [satoshis, any integer] / absolute offer fee you wish to receive for coinjoins (cj)
+ordertype = 'swabsoffer'  # [string, 'swreloffer' or 'swabsoffer'] / which fee type to actually use
+cjfee_a = 2000             # [satoshis, any integer] / absolute offer fee you wish to receive for coinjoins (cj)
 cjfee_r = '0.0008'        # [percent, any str between 0-1] / relative offer fee you wish to receive based on a cj's amount
 cjfee_factor = 0.1        # [percent, 0-1] / variance around the average fee. Ex: 200 fee, 0.2 var = fee is btw 160-240
-txfee = 150               # [satoshis, any integer] / the average transaction fee you're adding to coinjoin transactions
+txfee = 500               # [satoshis, any integer] / the average transaction fee you're adding to coinjoin transactions
 txfee_factor = 0.2        # [percent, 0-1] / variance around the average fee. Ex: 1000 fee, 0.2 var = fee is btw 800-1200
-minsize = int(1.2 * txfee / float(cjfee_r))          # [satoshis, any integer] / minimum size of your cj offer. Lower cj amounts will be disregarded
+minsize = 10000           # [satoshis, any integer] / minimum size of your cj offer. Lower cj amounts will be disregarded
+            # int(1.2 * txfee / float(cjfee_r))
 size_factor = 0.1         # [percent, 0-1] / variance around all offer sizes. Ex: 500k minsize, 0.1 var = 450k-550k
 gaplimit = 6
 
