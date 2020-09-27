@@ -77,11 +77,12 @@ from jmclient import load_program_config, get_network, update_persist_config,\
     NO_ROUNDING, get_max_cj_fee_values, get_default_max_absolute_fee, \
     get_default_max_relative_fee, RetryableStorageError, add_base_options, \
     BTCEngine, BTC_P2SH_P2WPKH, FidelityBondMixin, wallet_change_passphrase, \
-    parse_payjoin_setup, send_payjoin
+    parse_payjoin_setup, send_payjoin, JMBIP78ReceiverManager
 from qtsupport import ScheduleWizard, TumbleRestartWizard, config_tips,\
     config_types, QtHandler, XStream, Buttons, OkButton, CancelButton,\
     PasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,\
-    donation_more_message, BitcoinAmountEdit, JMIntValidator
+    donation_more_message, BitcoinAmountEdit, JMIntValidator,\
+    ReceiveBIP78Dialog
 
 from twisted.internet import task
 
@@ -706,7 +707,7 @@ class SpendTab(QWidget):
     def startSingle(self):
         if not self.spendstate.runstate == 'ready':
             log.info("Cannot start join, already running.")
-        if not self.validateSettings():
+        if not self.validateSingleSend():
             return
 
         destaddr = str(self.addressInput.text().strip())
@@ -1068,11 +1069,23 @@ class SpendTab(QWidget):
         self.tumbler_options = None
         self.tumbler_destaddrs = None
 
-    def validateSettings(self):
+    def validateSingleSend(self):
+        if not mainWindow.wallet_service:
+            JMQtMessageBox(self,
+                           "There is no wallet loaded.",
+                           mbtype='warn',
+                           title="Error")
+            return False
         if jm_single().bc_interface is None:
             JMQtMessageBox(
                 self,
                 "Sending coins not possible without blockchain source.",
+                mbtype='warn', title="Error")
+            return False
+        if len(self.addressInput.text()) == 0:
+            JMQtMessageBox(
+                self,
+                "Recipient address or BIP21 bitcoin: payment URI must be provided.",
                 mbtype='warn', title="Error")
             return False
         valid, errmsg = validate_address(
@@ -1097,11 +1110,6 @@ class SpendTab(QWidget):
                 self,
                 "Amount, in bitcoins, must be provided.",
                 mbtype='warn', title="Error")
-        if not mainWindow.wallet_service:
-            JMQtMessageBox(self,
-                           "There is no wallet loaded.",
-                           mbtype='warn',
-                           title="Error")
             return False
         return True
 
@@ -1467,6 +1475,10 @@ class JMMainWindow(QMainWindow):
         # was already shown
         self.syncmsg = ""
 
+        # BIP 78 Receiver manager object, only
+        # created when user starts a payjoin event:
+        self.backend_receiver = None
+
         self.reactor = reactor
         self.initUI()
 
@@ -1503,6 +1515,9 @@ class JMMainWindow(QMainWindow):
         changePassAction = QAction('&Change passphrase...', self)
         changePassAction.setStatusTip('Change wallet encryption passphrase')
         changePassAction.triggered.connect(self.changePassphrase)
+        receivePayjoinAction = QAction('Receive &payjoin...', self)
+        receivePayjoinAction.setStatusTip('Receive BIP78 style payment')
+        receivePayjoinAction.triggered.connect(self.receiver_bip78_init)
         quitAction = QAction(QIcon('exit.png'), '&Quit', self)
         quitAction.setShortcut('Ctrl+Q')
         quitAction.setStatusTip('Quit application')
@@ -1519,11 +1534,59 @@ class JMMainWindow(QMainWindow):
         walletMenu.addAction(showSeedAction)
         walletMenu.addAction(exportPrivAction)
         walletMenu.addAction(changePassAction)
+        walletMenu.addAction(receivePayjoinAction)
         walletMenu.addAction(quitAction)
         aboutMenu = menubar.addMenu('&About')
         aboutMenu.addAction(aboutAction)
 
         self.show()
+
+
+    def receiver_bip78_init(self):
+        """ Initializes BIP78 workflow with modal dialog.
+        """
+        if not self.wallet_service:
+            JMQtMessageBox(self,
+                           "No wallet loaded.",
+                           mbtype='crit',
+                           title="Error")
+            return
+        self.receiver_bip78_dialog = ReceiveBIP78Dialog(
+            self.startReceiver, self.stopReceiver)
+
+    def startReceiver(self):
+        """ Initializes BIP78 Receiving object and
+        starts the setup of onion service to serve
+        request.
+        Returns False in case we are not able to start
+        due to bad parameters, otherwise True (not affected
+        by success of whole request generation process).
+        """
+        assert self.receiver_bip78_dialog
+        amount = btc.amount_to_sat(
+            self.receiver_bip78_dialog.get_amount_text())
+        mixdepth = self.receiver_bip78_dialog.get_mixdepth()
+        if mixdepth > self.wallet_service.mixdepth:
+            JMQtMessageBox(self,
+                           "Wallet does not have mixdepth " + str(mixdepth),
+                           mbtype='crit', title="Error")
+            return False
+        if self.wallet_service.get_balance_by_mixdepth()[mixdepth] == 0:
+            JMQtMessageBox(self, "Mixdepth " + str(mixdepth) + \
+                           " has no coins.", mbtype='crit', title="Error")
+            return False
+        self.backend_receiver = JMBIP78ReceiverManager(self.wallet_service,
+            mixdepth, amount, 80, self.receiver_bip78_dialog.info_update,
+            uri_created_callback=self.receiver_bip78_dialog.update_uri,
+            shutdown_callback=self.receiver_bip78_dialog.process_complete,
+            mode="gui")
+        self.backend_receiver.start_pj_server_and_tor()
+        return True
+
+    def stopReceiver(self):
+        if self.backend_receiver is None:
+            return
+        self.backend_receiver.shutdown()
 
     def showAboutDialog(self):
         msgbox = QDialog(self)

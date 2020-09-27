@@ -468,7 +468,7 @@ def get_sendpayment_parser():
         action='store',
         type='int',
         dest='makercount',
-        help='how many makers to coinjoin with, default random from 4 to 6',
+        help='how many makers to coinjoin with, default random from 8 to 10',
         default=random.randint(8, 10))
     parser.add_option('-S',
                       '--schedule-file',
@@ -510,15 +510,6 @@ def get_sendpayment_parser():
                       dest='answeryes',
                       default=False,
                       help='answer yes to everything')
-    parser.add_option('--payjoin',
-                      '-T',
-                      type='str',
-                      action='store',
-                      dest='p2ep',
-                      default='',
-                      help='specify recipient IRC nick for a '
-                      'p2ep style payment, for example:\n'
-                      'J5Ehn3EieVZFtm4q ')
     parser.add_option('--psbt',
                       action='store_true',
                       dest='with_psbt',
