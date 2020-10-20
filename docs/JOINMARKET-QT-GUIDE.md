@@ -4,7 +4,7 @@
 
 The gui can be run directly from Python script by doing `python joinmarket-qt.py` from within `scripts/`, or by running the executable file/binary (**[CLICK HERE](https://github.com/AdamISZ/joinmarket-clientserver/releases/)** to download the latest release).
 
-**LATEST VERSION of JoinMarket-Qt is GUI version 15**. You can check the version via `About` in the menu.
+**LATEST VERSION of JoinMarket-Qt is GUI version 16**. You can check the version via `About` in the menu.
 
 No other files / setup should be needed. You might need to `chmod 755` on Linux.
 
@@ -27,6 +27,8 @@ The github commits to the main repo, above, are signed.
 
 ### Walkthrough
 
+Ensure Bitcoin Core is running, and synced. (Your version of Bitcoin Core must be compiled with wallet support).
+
 Double click the binary to run it, or go to the `/scripts` subdirectory and run `python joinmarket-qt.py`
 (make sure you're in the venv, go back to the README quick install instructions if you don't know what that means).
 
@@ -43,7 +45,10 @@ has been created in your Joinmarket data directory (see [here](USAGE.md#data)). 
     rpc_host = localhost #default usually correct 
     rpc_port = 8332 # default for mainnet
 
-Once the rpc connection is correct, you will be presented with this start screen:
+Before restarting though, you're strongly advised to make the configuration change explained [here](USAGE.md#setting-core-wallet), this
+may avoid possible RPC errors (indeed, read the whole of that section on "Configuring for Bitcoin Core").
+
+Once the rpc connection is correct, and you restart, you will be presented with this start screen:
 
 ![](images/JMQInitregtest.png)
 
@@ -73,6 +78,9 @@ Joinmarket wallet file names are .json by default; this isn't strictly necessary
 stick to that convention.
 
 The wallet will now automatically load from the your Bitcoin Core node. It may take a few seconds, during which you'll see "Reading wallet from blockchain...".
+
+If JoinMarketQt gets stuck at "Reading wallet from blockchain..." state, one possible solution may be to ensure you have set `rpc_wallet_file` correctly
+as described above. You can also check the terminal you ran the `joinmarket-qt.py` script from for other error messages.
 
 Since you just created it, it will have no coins initially:
 

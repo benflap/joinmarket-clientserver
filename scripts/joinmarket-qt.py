@@ -22,7 +22,6 @@ Some widgets copied and modified from https://github.com/spesmilo/electrum
 
 import sys, datetime, os, logging
 import platform, json, threading, time
-import qrcode
 from optparse import OptionParser
 
 from PySide2 import QtCore
@@ -30,8 +29,6 @@ from PySide2 import QtCore
 from PySide2.QtGui import *
 
 from PySide2.QtWidgets import *
-
-from PIL.ImageQt import ImageQt
 
 if platform.system() == 'Windows':
     MONOSPACE_FONT = 'Lucida Console'
@@ -61,9 +58,9 @@ donation_address_sw = "bc1q5x02zqj5nshw0yhx2s4tj75z6vkvuvww26jak5"
 donation_address_url = "https://bitcoinprivacy.me/joinmarket-donations"
 
 #Version of this Qt script specifically
-JM_GUI_VERSION = '16dev'
+JM_GUI_VERSION = '17dev'
 
-from jmbase import get_log
+from jmbase import get_log, stop_reactor
 from jmbase.support import DUST_THRESHOLD, EXIT_FAILURE, utxo_to_utxostr,\
     bintohex, hextobin, JM_CORE_VERSION
 from jmclient import load_program_config, get_network, update_persist_config,\
@@ -82,7 +79,7 @@ from qtsupport import ScheduleWizard, TumbleRestartWizard, config_tips,\
     config_types, QtHandler, XStream, Buttons, OkButton, CancelButton,\
     PasswordDialog, MyTreeWidget, JMQtMessageBox, BLUE_FG,\
     donation_more_message, BitcoinAmountEdit, JMIntValidator,\
-    ReceiveBIP78Dialog
+    ReceiveBIP78Dialog, QRCodePopup
 
 from twisted.internet import task
 
@@ -1302,23 +1299,6 @@ class CoinsTab(QWidget):
                        lambda: app.clipboard().setText(txid))
         menu.exec_(self.cTW.viewport().mapToGlobal(position))
 
-class BitcoinQRCodePopup(QDialog):
-
-    def __init__(self, parent, address):
-        super().__init__(parent)
-        self.address = address
-        self.setWindowTitle(address)
-        img = qrcode.make('bitcoin:' + address)
-        self.imageLabel = QLabel()
-        self.imageLabel.setPixmap(QPixmap.fromImage(ImageQt(img)))
-        layout = QVBoxLayout()
-        layout.addWidget(self.imageLabel)
-        self.setLayout(layout)
-        self.initUI()
-
-    def initUI(self):
-        self.show()
-
 
 class JMWalletTab(QWidget):
 
@@ -1385,7 +1365,7 @@ class JMWalletTab(QWidget):
             menu.exec_(self.walletTree.viewport().mapToGlobal(position))
 
     def openQRCodePopup(self, address):
-        popup = BitcoinQRCodePopup(self, address)
+        popup = QRCodePopup(self, address, btc.encode_bip21_uri(address, {}))
         popup.show()
 
     def updateWalletInfo(self, walletinfo=None):
@@ -1489,8 +1469,7 @@ class JMMainWindow(QMainWindow):
             event.accept()
             if self.reactor.threadpool is not None:
                 self.reactor.threadpool.stop()
-            if reactor.running:
-                self.reactor.stop()
+            stop_reactor()
         else:
             event.ignore()
 
@@ -1845,6 +1824,10 @@ class JMMainWindow(QMainWindow):
                                mbtype='warn',
                                title="Error")
                     return
+                if decrypted == "error":
+                    # special case, not a failure to decrypt the file but
+                    # a failure of wallet loading, give up:
+                    self.close()
         else:
             if not testnet_seed:
                 testnet_seed, ok = QInputDialog.getText(self,
@@ -1888,6 +1871,11 @@ class JMMainWindow(QMainWindow):
             self.walletRefresh.stop()
 
         self.wallet_service = WalletService(wallet)
+        # in case an RPC error occurs in the constructor:
+        if self.wallet_service.rpc_error:
+            JMQtMessageBox(self,self.wallet_service.rpc_error,
+                           mbtype='warn',title="Error")
+            return "error"
 
         if jm_single().bc_interface is None:
             self.centralWidget().widget(0).updateWalletInfo(

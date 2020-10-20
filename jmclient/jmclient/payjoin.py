@@ -693,7 +693,8 @@ def process_payjoin_proposal_from_server(response_body, manager):
                     if (inp.prevout.hash, inp.prevout.n) == (
                         inp2.prevout.hash, inp2.prevout.n):
                         payjoin_proposal_psbt.set_utxo(
-                            manager.initial_psbt.inputs[j].utxo, i)
+                            manager.initial_psbt.inputs[j].utxo, i,
+                            force_witness_utxo=True)
     signresultandpsbt, err = manager.wallet_service.sign_psbt(
         payjoin_proposal_psbt.serialize(), with_sign_result=True)
     if err:
@@ -952,6 +953,8 @@ class PayjoinServer(Resource):
         # intended (note the outputs will be shuffled next!):
         outs[1]["value"] -= our_fee_bump
 
+        # TODO this only works for 2 input transactions, otherwise
+        # pure-shuffle will not be valid as per BIP78 ordering requirement.
         unsigned_payjoin_tx = btc.make_shuffled_tx(payjoin_tx_inputs, outs,
                                     version=payment_psbt.unsigned_tx.nVersion,
                                     locktime=payment_psbt.unsigned_tx.nLockTime)
@@ -969,6 +972,7 @@ class PayjoinServer(Resource):
                     inp.nSequence = inp2.nSequence
                     spent_outs.append(payment_psbt.inputs[j].utxo)
                     input_found = True
+                    sender_index = i
                     break
             if input_found:
                 continue
@@ -1006,6 +1010,11 @@ class PayjoinServer(Resource):
         assert signresult.num_inputs_final == len(receiver_utxos)
         assert not signresult.is_final
 
+        # with signing succcessful, remove the utxo field from the
+        # counterparty's input (this is required by BIP78). Note we don't
+        # do this on PSBT creation as the psbt signing code throws ValueError
+        # unless utxos are present.
+        receiver_signed_psbt.inputs[sender_index] = btc.PSBT_Input(index=sender_index)
         log.debug("Receiver signing successful. Payjoin PSBT is now:\n{}".format(
             self.wallet_service.human_readable_psbt(receiver_signed_psbt)))
         # construct txoutset for the wallet service callback; we cannot use
