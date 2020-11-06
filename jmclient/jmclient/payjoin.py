@@ -8,7 +8,7 @@ from twisted.web.resource import Resource, ErrorPage
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet.error import ConnectionRefusedError, ConnectionLost
-from twisted.internet.endpoints import TCP4ClientEndpoint
+from twisted.internet.endpoints import TCP4ClientEndpoint, UNIXClientEndpoint
 from twisted.web.http_headers import Headers
 import txtorcon
 from txtorcon.web import tor_agent
@@ -16,6 +16,7 @@ from txtorcon.socks import HostUnreachableError
 import urllib.parse as urlparse
 from urllib.parse import urlencode
 import json
+import random
 from io import BytesIO
 from pprint import pformat
 from jmbase import BytesProducer, bintohex, jmprint
@@ -650,7 +651,11 @@ def fallback_nonpayjoin_broadcast(err, manager):
     log.warn("Error message was: " + err.decode("utf-8"))
     original_tx = manager.initial_psbt.extract_transaction()
     if not jm_single().bc_interface.pushtx(original_tx.serialize()):
-        log.error("Unable to broadcast original payment. The payment is NOT made.")
+        errormsg = ("Unable to broadcast original payment. Check your wallet\n"
+        "to see whether original payment was made.")
+        log.error(errormsg)
+        # ensure any GUI as well as command line sees the message:
+        manager.user_info_callback(errormsg)
         quit()
         return
     log.info("Payment made without coinjoin. Transaction: ")
@@ -683,7 +688,6 @@ def process_payjoin_proposal_from_server(response_body, manager):
         log.error("Payjoin tx from server could not be parsed: " + repr(e))
         fallback_nonpayjoin_broadcast(b"Server sent invalid psbt", manager)
         return
-
     log.debug("Receiver sent us this PSBT: ")
     log.debug(manager.wallet_service.human_readable_psbt(payjoin_proposal_psbt))
     # we need to add back in our utxo information to the received psbt,
@@ -875,6 +879,12 @@ class PayjoinServer(Resource):
                                     "rejected from mempool.",
                                     "original-psbt-rejected")
 
+        # Now that the PSBT is accepted, we schedule fallback in case anything
+        # fails later on in negotiation (as specified in BIP78):
+        self.manager.timeout_fallback_dc = reactor.callLater(60,
+                                                fallback_nonpayjoin_broadcast,
+                                                b"timeout", self.manager)
+
         receiver_utxos = self.manager.select_receiver_utxos()
         if not receiver_utxos:
             return self.bip78_error(request,
@@ -894,11 +904,21 @@ class PayjoinServer(Resource):
                               self.manager.change_out.scriptPubKey))}
 
         # we now know there were one/two outputs and know which is payment.
-        # bump payment output with our input:
+        # set the ordering of the outputs correctly.
         if change_out:
-            outs = [pay_out, change_out]
+            # indices of original payment were set in JMPayjoinManager
+            # sanity check:
+            if self.manager.change_out_index == 0 and \
+               self.manager.pay_out_index == 1:
+                outs = [change_out, pay_out]
+            elif self.manager.change_out_index == 1 and \
+                 self.manager.pay_out_index == 0:
+                outs = [pay_out, change_out]
+            else:
+                assert False, "More than 2 outputs is not supported."
         else:
             outs = [pay_out]
+        # bump payment output with our input:
         our_inputs_val = sum([v["value"] for _, v in receiver_utxos.items()])
         pay_out["value"] += our_inputs_val
         log.debug("We bumped the payment output value by: " + str(
@@ -950,12 +970,15 @@ class PayjoinServer(Resource):
                                         "original-psbt-rejected")
 
         # Having checked the sender's conditions, we can apply the fee bump
-        # intended (note the outputs will be shuffled next!):
-        outs[1]["value"] -= our_fee_bump
+        # intended:
+        outs[self.manager.change_out_index]["value"] -= our_fee_bump
 
         # TODO this only works for 2 input transactions, otherwise
-        # pure-shuffle will not be valid as per BIP78 ordering requirement.
-        unsigned_payjoin_tx = btc.make_shuffled_tx(payjoin_tx_inputs, outs,
+        # reversal [::-1] will not be valid as per BIP78 ordering requirement.
+        # (For outputs, we do nothing since we aren't batching in other payments).
+        if random.random() < 0.5:
+            payjoin_tx_inputs = payjoin_tx_inputs[::-1]
+        unsigned_payjoin_tx = btc.mktx(payjoin_tx_inputs, outs,
                                     version=payment_psbt.unsigned_tx.nVersion,
                                     locktime=payment_psbt.unsigned_tx.nLockTime)
 
@@ -1159,7 +1182,13 @@ class JMBIP78ReceiverManager(object):
         of starting the hidden service and returning/
         printing the BIP21 URI:
         """
-        d = txtorcon.connect(reactor)
+        control_host = jm_single().config.get("PAYJOIN", "tor_control_host")
+        control_port = int(jm_single().config.get("PAYJOIN", "tor_control_port"))
+        if str(control_host).startswith('unix:'):
+            control_endpoint = UNIXClientEndpoint(reactor, control_host[5:])
+        else:
+            control_endpoint = TCP4ClientEndpoint(reactor, control_host, control_port)
+        d = txtorcon.connect(reactor, control_endpoint)
         d.addCallback(self.create_onion_ep)
         d.addErrback(self.setup_failed)
         # TODO: add errbacks to the next two calls in
